@@ -1,0 +1,229 @@
+<script>
+let attributes = {
+  focus: { xp:0, level:1 },
+  strength: { xp:0, level:1 },
+  mind: { xp:0, level:1 },
+  skill: { xp:0, level:1 },
+  knowledge: { xp:0, level:1 },
+  health: { value:100 },
+  energy: { value:50 },
+};
+let completedTasks = 0;
+let tasksHistory = [];
+let avoidChallenges = [];
+
+// --- Local Storage Functions ---
+function saveData() {
+  const data = {
+    attributes,
+    completedTasks,
+    tasksHistory,
+    avoidChallenges
+  };
+  localStorage.setItem("rpgDashboardData", JSON.stringify(data));
+}
+
+function loadData() {
+  const saved = localStorage.getItem("rpgDashboardData");
+  if (saved) {
+    const data = JSON.parse(saved);
+    attributes = data.attributes || attributes;
+    completedTasks = data.completedTasks || 0;
+    tasksHistory = data.tasksHistory || [];
+    avoidChallenges = data.avoidChallenges || [];
+  }
+}
+
+// --- XP and Progress ---
+function xpNeeded(level){ return 50 + (level-1)*20; }
+const MAX_LEVEL = 100;
+
+function updateProgress(){
+  let totalLevel = 0;
+  
+  for(let key in attributes){
+    if(key==='health'||key==='energy'){
+      document.getElementById(key+'Val').textContent = attributes[key].value;
+    }else{
+      totalLevel += attributes[key].level;
+      document.getElementById(key+'Val').textContent = attributes[key].xp;
+      document.getElementById(key+'Level').textContent = attributes[key].level;
+      let needed = xpNeeded(attributes[key].level);
+      let percent = (attributes[key].xp/needed)*100;
+      const xpBar = document.getElementById(key+'XP');
+      xpBar.style.width = percent+'%';
+      xpBar.textContent = `${attributes[key].xp}/${needed} XP`;
+    }
+  }
+
+  document.getElementById('level').textContent = totalLevel;
+  document.getElementById('currentMilestone').textContent = Math.floor(totalLevel/10)*10 || 1;
+  document.getElementById('nextMilestone').textContent = Math.ceil(totalLevel/10)*10 + (totalLevel % 10 === 0 && totalLevel !== 0 ? 10 : 0);
+  if(totalLevel >= MAX_LEVEL*5) document.getElementById('nextMilestone').textContent = 'MAX!';
+
+  let avgLevel = Math.round(totalLevel / 5);
+  document.getElementById('nextLevel').textContent = avgLevel + 1 > MAX_LEVEL ? MAX_LEVEL : avgLevel + 1;
+  document.getElementById('xpToGo').textContent = 'N/A';
+
+  saveData(); // 🔥 Save every time progress updates
+}
+
+// --- Task Functions ---
+function addTask(){
+  const taskInput = document.getElementById('taskInput');
+  const categorySelect = document.getElementById('taskCategory');
+  const taskText = taskInput.value.trim();
+  if(taskText==='') return;
+
+  const taskList = document.getElementById('taskList');
+  const taskDiv = document.createElement('div');
+  taskDiv.className = `task-item category-${categorySelect.value}`;
+  taskDiv.innerHTML = `<span>${taskText}</span> <button onclick="completeTask(this,'${categorySelect.value}','${taskText}')">Complete</button>`;
+
+  taskList.appendChild(taskDiv);
+  taskInput.value='';
+  saveData();
+}
+
+function completeTask(button, category, taskText){
+  const taskDiv = button.parentElement;
+  taskDiv.classList.add('complete');
+  setTimeout(()=>taskDiv.remove(),500);
+
+  let xpGain = 10;
+  if(category==='health'||category==='energy'){
+    attributes[category].value += category==='health'?5:3;
+    if(attributes[category].value>100) attributes[category].value=100;
+  }else{
+    attributes[category].xp += xpGain;
+    if(attributes[category].level < MAX_LEVEL && attributes[category].xp>=xpNeeded(attributes[category].level)){
+      attributes[category].level++;
+      attributes[category].xp -= xpNeeded(attributes[category].level-1);
+      showBadge('badgeLevel');
+      alert(`${category.charAt(0).toUpperCase()+category.slice(1)} leveled up to Lv ${attributes[category].level}! 🎉`);
+    }
+  }
+  
+  tasksHistory.unshift({text: taskText, category, xp: xpGain, date: new Date().toLocaleDateString()});
+  if (tasksHistory.length > 10) tasksHistory.pop();
+
+  completedTasks++;
+  if(completedTasks %5===0) showBadge('badgeTask');
+
+  updateHistory();
+  updateProgress();
+}
+
+function updateHistory(){
+  const historyList = document.getElementById('historyList');
+  historyList.innerHTML = '';
+  tasksHistory.forEach(item => {
+    const historyDiv = document.createElement('div');
+    historyDiv.className = 'history-item';
+    historyDiv.innerHTML = `<span>[+${item.xp} XP] ${item.text}</span> <span>${item.date}</span>`;
+    historyList.appendChild(historyDiv);
+  });
+  saveData();
+}
+
+// --- Avoid/Challenge Functions ---
+function addAvoidChallenge(){
+  const input = document.getElementById('avoidChallengeInput');
+  const typeSelect = document.getElementById('avoidChallengeType');
+  const goalText = input.value.trim();
+  if(goalText==='') return;
+  
+  const newGoal = {
+    text: goalText,
+    type: typeSelect.value,
+    strikes: 0,
+    streak: 0,
+    isFailed: false,
+    id: Date.now()
+  };
+  avoidChallenges.push(newGoal);
+  
+  renderAvoidChallenges();
+  input.value='';
+  saveData();
+}
+
+function renderAvoidChallenges(){
+  const list = document.getElementById('avoidChallengeList');
+  list.innerHTML = '';
+  
+  avoidChallenges.forEach(goal => {
+    const goalDiv = document.createElement('div');
+    goalDiv.className = `avoid-item ${goal.type} ${goal.isFailed ? 'strike' : ''}`;
+    let actions = '';
+    let statusText = '';
+    if (goal.type === 'avoid') {
+      statusText = `Strikes: ${goal.strikes}`;
+      actions = `<button onclick="addStrike(${goal.id})">Fail/Strike</button>`;
+    } else {
+      statusText = `Streak: ${goal.streak} Days`;
+      actions = `
+        <button onclick="successChallenge(${goal.id})">Success/Day</button>
+        <button onclick="failChallenge(${goal.id})">Fail/Reset</button>
+      `;
+    }
+    goalDiv.innerHTML = `<span>${goal.text} (${statusText})</span><div class="task-actions">${actions}</div>`;
+    list.appendChild(goalDiv);
+  });
+  saveData();
+}
+
+function addStrike(id){
+  const goal = avoidChallenges.find(g => g.id === id);
+  if(!goal || goal.type !== 'avoid') return;
+  
+  goal.strikes++;
+  attributes.focus.xp = Math.max(0, attributes.focus.xp - 5);
+  attributes.energy.value = Math.max(0, attributes.energy.value - 5);
+  
+  if(goal.strikes >= 3){
+    goal.isFailed = true;
+    alert(`AVOID FAILED: ${goal.text} - Too many strikes!`);
+  }
+  updateProgress();
+  renderAvoidChallenges();
+}
+
+function successChallenge(id){
+  const goal = avoidChallenges.find(g => g.id === id);
+  if(!goal || goal.type !== 'challenge') return;
+  
+  goal.streak++;
+  attributes.mind.xp += 15;
+  
+  if(goal.streak % 7 === 0){
+    showBadge('badgeStreak');
+    attributes.skill.xp += 20;
+    alert(`CHALLENGE BONUS! 7-Day Streak for ${goal.text}! +20 Skill XP! 🔥`);
+  }
+  
+  updateProgress();
+  renderAvoidChallenges();
+}
+
+function failChallenge(id){
+  const goal = avoidChallenges.find(g => g.id === id);
+  if(!goal || goal.type !== 'challenge') return;
+  if (goal.streak > 0) alert(`CHALLENGE FAILED: ${goal.text} - Streak reset from ${goal.streak}.`);
+  goal.streak = 0;
+  updateProgress();
+  renderAvoidChallenges();
+}
+
+function showBadge(id){
+  const badge = document.getElementById(id);
+  badge.classList.add('show');
+  setTimeout(()=> badge.classList.remove('show'),2000);
+}
+
+// --- Initialize ---
+loadData();     // 🔥 Load previous saved data
+updateProgress();
+updateHistory();
+renderAvoidChallenges();
+</script>
